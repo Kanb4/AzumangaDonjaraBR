@@ -1,0 +1,45 @@
+name: Build Full Package
+on:
+  push:
+    tags: ['v*']
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11' }
+      - name: Install deps
+        run: pip install pyinstaller pillow
+      - name: Build launcher
+        run: pyinstaller --onefile --noconsole --name "Azumanga Launcher" --add-data "imgs;imgs" --icon "imgs/logo.png" launcher.py
+      - name: Create full package
+        shell: powershell
+        run: |
+          $ver = "${{ github.ref_name }}"
+          $out = "Azumanga_Donjara_$ver.zip"
+          
+          # Create package folder structure
+          $pkgDir = "package"
+          if (Test-Path $pkgDir) { Remove-Item $pkgDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $pkgDir | Out-Null
+          New-Item -ItemType Directory -Path "$pkgDir\duckstation" | Out-Null
+          New-Item -ItemType Directory -Path "$pkgDir\duckstation\textures\SLPS-03424\replacements" | Out-Null
+          New-Item -ItemType Directory -Path "$pkgDir\imgs" | Out-Null
+          
+          # Copy everything
+          Copy-Item "dist/Azumanga Launcher.exe" "$pkgDir/"
+          Copy-Item "duckstation/duckstation-qt-x64-ReleaseLTCG.exe" "$pkgDir/duckstation/"
+          Copy-Item "Azumanga_Final.cue" "$pkgDir/"
+          Copy-Item "Azumanga_Final.bin" "$pkgDir/"
+          Copy-Item "duckstation/textures/SLPS-03424/replacements/*" "$pkgDir/duckstation/textures/SLPS-03424/replacements/"
+          Copy-Item "imgs/*" "$pkgDir/imgs/"
+          
+          # Zip it
+          Compress-Archive -Path "$pkgDir/*" -DestinationPath $out -Force
+          echo "PACKAGE=$out" >> $env:GITHUB_ENV
+      - name: Upload full package
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.PACKAGE }}
+          generate_release_notes: true
