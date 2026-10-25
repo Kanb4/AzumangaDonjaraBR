@@ -159,8 +159,115 @@ class Launcher:
         self.root.after(50, self.render_logo)
     
     def check_updates(self):
-        """Placeholder for update check"""
-        messagebox.showinfo("Atualizações", "Versão atual: v.0.1\n\nVerificação de atualizações será implementada em breve.")
+        """Check GitHub for updates"""
+        import threading
+        threading.Thread(target=self._check_updates_thread, daemon=True).start()
+    
+    def _check_updates_thread(self):
+        try:
+            self.root.after(0, lambda: self.status_label.config(text="Verificando atualizações...", fg=FG_MUTED))
+            self.root.after(0, lambda: self.btn_update.config(state=tk.DISABLED))
+            
+            import requests
+            r = requests.get("https://api.github.com/repos/Kanb4/AzumangaDonjaraBR/releases/latest", timeout=10)
+            data = r.json()
+            latest_tag = data["tag_name"]  # "v0.1", "v0.2", etc.
+            
+            # Simple version comparison
+            current = "v0.1"
+            if self._version_gt(latest_tag, current):
+                # Find zip asset
+                zip_asset = next((a for a in data["assets"] if a["name"].endswith(".zip")), None)
+                if zip_asset:
+                    self.root.after(0, lambda: self._prompt_update(latest_tag, zip_asset["browser_download_url"], data.get("body", "")))
+                else:
+                    self.root.after(0, lambda: messagebox.showerror("Erro", "Zip não encontrado no release."))
+            else:
+                self.root.after(0, lambda: messagebox.showinfo("Atualizações", f"Você já está na versão mais recente ({current})."))
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("Erro", f"Falha ao verificar atualizações:\n{e}"))
+        finally:
+            self.root.after(0, lambda: self.status_label.config(text="", fg=OK))
+            self.root.after(0, lambda: self.btn_update.config(state=tk.NORMAL))
+    
+    def _version_gt(self, a, b):
+        """Compare version tags like v0.1 < v0.2"""
+        try:
+            a_num = tuple(map(int, a.lstrip('v').split('.')))
+            b_num = tuple(map(int, b.lstrip('v').split('.')))
+            return a_num > b_num
+        except:
+            return a > b
+    
+    def _prompt_update(self, version, zip_url, changelog):
+        msg = f"Nova versão {version} disponível!\n\n"
+        if changelog:
+            msg += f"Changelog:\n{changelog[:500]}"
+            if len(changelog) > 500:
+                msg += "..."
+            msg += "\n\n"
+        msg += "Baixar e instalar agora? (pode demorar, ~220MB)"
+        
+        if messagebox.askyesno("Atualização disponível", msg):
+            self._do_full_update(zip_url)
+    
+    def _do_full_update(self, zip_url):
+        import threading
+        threading.Thread(target=self._download_and_install, args=(zip_url,), daemon=True).start()
+    
+    def _download_and_install(self, zip_url):
+        try:
+            import requests, zipfile, tempfile, shutil, subprocess, sys, os
+            
+            self.root.after(0, lambda: self.status_label.config(text="Baixando atualização...", fg=FG_MUTED))
+            self.root.after(0, lambda: self.btn_jogar.config(state=tk.DISABLED))
+            self.root.after(0, lambda: self.btn_update.config(state=tk.DISABLED))
+            
+            tmp_zip = os.path.join(tempfile.gettempdir(), "Azumanga_update.zip")
+            
+            # Download with progress
+            with requests.get(zip_url, stream=True, timeout=30) as r:
+                total = int(r.headers.get('content-length', 0))
+                downloaded = 0
+                with open(tmp_zip, "wb") as f:
+                    for chunk in r.iter_content(8192):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total:
+                                pct = downloaded * 100 // total
+                                self.root.after(0, lambda p=pct: self.status_label.config(text=f"Baixando... {p}%"))
+            
+            self.root.after(0, lambda: self.status_label.config(text="Instalando...", fg=FG_MUTED))
+            
+            tmp_extract = os.path.join(tempfile.gettempdir(), "Azumanga_update")
+            if os.path.exists(tmp_extract):
+                shutil.rmtree(tmp_extract)
+            
+            with zipfile.ZipFile(tmp_zip, 'r') as z:
+                z.extractall(tmp_extract)
+            
+            # Copy extracted files to game dir
+            for item in os.listdir(tmp_extract):
+                src = os.path.join(tmp_extract, item)
+                dst = os.path.join(self.game_dir, item)
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(src, dst)
+            
+            self.root.after(0, lambda: self.status_label.config(text="Atualizado! Reiniciando...", fg=OK))
+            
+            # Restart new exe
+            new_exe = os.path.join(self.game_dir, "Azumanga Launcher.exe")
+            subprocess.Popen([new_exe])
+            self.root.after(0, self.root.quit)
+            
+        except Exception as e:
+            self.root.after(0, lambda: messagebox.showerror("Erro", f"Falha na atualização:\n{e}"))
+            self.root.after(0, lambda: self.btn_jogar.config(state=tk.NORMAL if all(self.status.values()) else tk.DISABLED))
+            self.root.after(0, lambda: self.btn_update.config(state=tk.NORMAL))
+            self.root.after(0, lambda: self.status_label.config(text="", fg=OK))
     
     def build_changelog_panel(self, parent):
         """Build compact changelog/progress panel below credits button"""
